@@ -1,0 +1,420 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.integrate import solve_ivp
+from scipy.optimize import least_squares
+
+# Entered COVID-19 Data (2020-2021)
+dates = pd.date_range(start="2020-01-01", periods=730, freq='D').tolist()
+
+# Simulated realistic total cases for 2020-2021
+total_cases = [0, 0,
+0,
+0,
+0,
+0,
+0,
+1,
+1,
+1,
+1,
+2,
+2,
+2,
+2,
+2,
+2,
+3,
+8,
+12,
+22,
+30,
+40,
+51,
+65,
+70,
+97,
+111,
+135,
+174,
+184,
+210,
+232,
+254,
+276,
+305,
+323,
+343,
+407,
+493,
+542,
+665,
+873,
+1182,
+1337,
+1932,
+2388,
+2950,
+3526,
+4399,
+4787,
+5445,
+5959,
+6677,
+7261,
+8068,
+8733,
+9855,
+10578,
+11516,
+12233,
+13464,
+14554,
+16085,
+19147,
+20244,
+22020,
+23298,
+25133,
+26484,
+28167,
+29286,
+30748,
+31987,
+33616,
+34854,
+36663,
+37801,
+39539,
+40532,
+42208,
+43151,
+44129,
+44890,
+46140,
+46867,
+ 48116,
+48445,
+49485,
+50964,
+51905,
+52800,
+53317,
+53727,
+54247,
+54587,
+55005,
+55456,
+56017,
+56256,
+56604,
+56956,
+57437,
+57724,
+58198,
+58460,
+58848,
+59287,
+59465,
+59841,
+60103,
+60635,
+60982,
+61440,
+61630,
+61882,
+61992,
+62371,
+
+               
+
+
+               62691,
+62964,
+63328,
+63731,
+64184,
+64516,
+64996,
+65305,
+65839,
+66228,
+66607,
+66974,
+67412,
+67838,
+68303,
+69255,
+70195,
+72140,
+73175,
+75062,
+77013,
+78790,
+80922,
+83576,
+84811,
+87607,
+
+              
+
+    # 2021 Data
+
+        131918,
+134690,
+137654,
+140391,
+142578,
+145664,
+146928,
+150246,
+151553,
+153187,
+154476,
+155657,
+156496,
+158042,
+158506,
+159252,
+160332,
+160657,
+161274,
+161539,
+161868,
+162178,
+162489,
+162641,
+162997,
+163113,
+163388,
+163581,
+163736,
+163911,
+164080,
+164233,
+164423,
+164633,
+164719,
+164993,
+165110,
+165199,
+165273,
+165370,
+165468,
+165559,
+165702,
+165778,
+165901,
+165979,
+166098,
+166191,
+166315,
+166534,
+166730,
+166767,
+166982,
+167051,
+167066,
+167103,
+167155,
+167292,
+167375,
+167465,
+167532,
+167692,
+167803,
+168000,
+168256,
+168552,
+168867,
+169206,
+169532,
+169884,
+170623,
+171111,
+172263,
+173411,
+174759,
+176019,
+177615,
+178508,
+180661,
+181962,
+183444,
+185267,
+186635,
+188243,
+189751,
+191345,
+192431,
+194088,
+195511,
+197046,
+198239,
+199538,
+200356,
+201630,
+202199,
+203081,
+204201,
+204752,
+205779,
+206064,
+206623,
+   207219,
+207694,
+208153,
+208797,
+209298,
+209713,
+210136,
+210460,
+211496,
+211798,
+212059,
+212359,
+212627,
+212765,
+212947,
+213127,
+213321,
+213464,
+213589,
+213677,
+213883,
+214092,
+214218,
+214513,
+214622,
+215164
+
+]
+
+# Extend the total_cases list to match 730 days (using interpolation)
+total_cases = np.interp(np.arange(730), np.linspace(0, 729, num=len(total_cases)), total_cases)
+
+# Create DataFrame
+df = pd.DataFrame({"Date": dates, "Total Cases": total_cases.astype(int)})
+df["Days"] = (df["Date"] - df["Date"].min()).dt.days  # Convert dates to numerical days
+
+# SEIR-HVD Model with Fatigue, Vaccination, Hospitalization, and Death
+def covid_model(t, y, beta0, lambda_f, sigma, gamma, delta, mu, nu):
+    S, E, I, R, H, V, D = y
+    N = S + E + I + R + H + V + D
+
+    # Fatigue-dependent Transmission Rate
+    beta_t = beta0 * (1 - np.tanh(lambda_f * t) / 2)
+
+    # Equations
+    dSdt = -beta_t * S * I / N - nu * S   # Susceptible decreases due to infection & vaccination
+    dEdt = beta_t * S * I / N - sigma * E  # Exposed progresses to infected
+    dIdt = sigma * E - gamma * I - delta * I  # Infected recovers, gets hospitalized, or dies
+    dRdt = gamma * I  # Recovered
+    dHdt = delta * I - mu * H  # Hospitalized patients recover or die
+    dVdt = nu * S  # Vaccinated population
+    dDdt = mu * H  # Deaths from hospitalization
+
+    return [dSdt, dEdt, dIdt, dRdt, dHdt, dVdt, dDdt]
+
+# Solve ODE
+def solve_ode(params):
+    beta0, lambda_f, sigma, gamma, delta, mu, nu = params
+    y0 = [990000, 100, 50, 0, 0, 0, 0]  # Initial values (S, E, I, R, H, V, D)
+    t_span = (0, df["Days"].max())
+    t_eval = np.arange(df["Days"].max() + 1)
+    sol = solve_ivp(covid_model, t_span, y0, args=(beta0, lambda_f, sigma, gamma, delta, mu, nu), t_eval=t_eval)
+    return sol.t, sol.y
+
+# Fit Model to Data (Using Least Squares)
+def residuals(params):
+    t_model, y_model = solve_ode(params)
+    I_model = y_model[2]  # Extract the infected cases
+    I_obs = df["Total Cases"].values
+    I_model_interp = np.interp(df["Days"], t_model, I_model)
+    return (I_obs - I_model_interp) / np.max(I_obs)  # Normalize residuals
+
+# Initial parameter guesses
+initial_params = [0.4, 0.03, 1/4, 0.12, 0.06, 0.015, 0.0008]  # (beta0, lambda_f, sigma, gamma, delta, mu, nu)
+
+# Perform optimization
+result = least_squares(residuals, initial_params, bounds=(0, np.inf))
+optimized_params = result.x
+
+# Solve with optimized parameters
+t_model, y_model = solve_ode(optimized_params)
+S, E, I, R, H, V, D = y_model
+
+# Plot Total Cases vs Time
+plt.figure(figsize=(12, 6))
+plt.plot(df["Date"], df["Total Cases"], 'o', markersize=3, label="Reported Cases", alpha=0.6)
+plt.plot(df["Date"], I, label="Model", linewidth=2)
+plt.xlabel("Date")
+plt.ylabel("Total Cases")
+#plt.title("COVID-19 Reported vs Model-Fitted Cases (2020-2021)")
+plt.legend()
+plt.xticks(rotation=45)
+plt.show()
+
+#FOR THE SECOND FIGURE, THE CODE IS PRESENTED BELOW
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+from scipy.integrate import solve_ivp
+
+# Parameters
+total_population = 1000000  # Total population
+initial_exposed = 100        # Initial exposed individuals
+initial_infected = 50        # Initial infected individuals
+initial_recovered = 0        # Initial recovered individuals
+initial_vaccinated = 0       # Initial vaccinated individuals
+initial_dead = 0             # Initial dead individuals
+initial_susceptible = total_population - (initial_exposed + initial_infected + initial_recovered + initial_vaccinated + initial_dead)
+
+# Fatigue function for beta variation
+def fatigue_effect(t, beta0, beta_max, fatigue_rate):
+    return beta0 + (beta_max - beta0) * (1 - np.exp(-fatigue_rate * t))
+
+# SEIR-HVD Model with Fatigue
+def seir_hvd(t, y, beta0, beta_max, fatigue_rate, sigma, gamma, mu, delta_v, delta_d):
+    S, E, I, R, V, D = y
+    beta = fatigue_effect(t, beta0, beta_max, fatigue_rate)
+    dSdt = -beta * S * I / total_population
+    dEdt = beta * S * I / total_population - sigma * E
+    dIdt = sigma * E - gamma * I - mu * I
+    dRdt = gamma * I
+    dVdt = delta_v * S
+    dDdt = mu * I + delta_d * D
+    return [dSdt, dEdt, dIdt, dRdt, dVdt, dDdt]
+
+# Parameters for simulation
+beta0 = 0.2       # Initial transmission rate
+beta_max = 0.8    # Maximum transmission rate due to fatigue
+fatigue_rate = 0.01 # Rate of increase in beta due to fatigue
+sigma = 1/5       # Incubation rate (1/average incubation period)
+gamma = 1/10      # Recovery rate (1/average infectious period)
+mu = 0.005        # Death rate
+delta_v = 0.002   # Vaccination rate
+delta_d = 0.001   # Natural death rate
+
+# Solve the system
+t_span = (0, 365)  # Simulate for 1 year
+t_eval = np.linspace(0, 365, 365)
+initial_conditions = [initial_susceptible, initial_exposed, initial_infected, initial_recovered, initial_vaccinated, initial_dead]
+sol = solve_ivp(seir_hvd, t_span, initial_conditions, args=(beta0, beta_max, fatigue_rate, sigma, gamma, mu, delta_v, delta_d), t_eval=t_eval)
+
+# Plot results
+plt.figure(figsize=(10,6))
+plt.plot(t_eval, sol.y[2], label='Infected', color='red')
+plt.plot(t_eval, sol.y[0], label='Susceptible', color='blue')
+plt.plot(t_eval, sol.y[3], label='Recovered', color='green')
+plt.plot(t_eval, sol.y[5], label='Deaths', color='black')
+plt.axvline(x=np.argmax(sol.y[2]), linestyle='--', color='gray', label='Peak Infections')
+plt.annotate('Fatigue-induced surge', xy=(np.argmax(sol.y[2]), max(sol.y[2])), 
+             xytext=(np.argmax(sol.y[2])-50, max(sol.y[2])-5000), 
+             arrowprops=dict(facecolor='black', arrowstyle='->'))
+plt.xlabel('Days')
+plt.ylabel('Population')
+plt.title('Epidemic Dynamics with Fatigue-Induced Contact Rate')
+plt.legend()
+plt.show()
